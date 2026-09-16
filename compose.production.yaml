@@ -1,0 +1,346 @@
+services:
+
+  # ==========================================================
+  # Laravel PHP-FPM
+  # ==========================================================
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    image: laravel-app:production
+    container_name: laravel_app
+
+    restart: unless-stopped
+
+    working_dir: /var/www/html
+
+    env_file:
+      - .env.production
+
+    environment:
+      APP_ENV: production
+      APP_DEBUG: "false"
+
+      DB_CONNECTION: mysql
+      DB_HOST: mysql
+      DB_PORT: 3306
+
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+    networks:
+      - laravel
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "php-fpm -t"
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+    volumes:
+     - ./public:/var/www/html/public:ro
+     - ./storage/app/public:/var/www/html/storage/app/public
+     - ./storage/app/public:/var/www/html/public/storage:ro
+
+
+  # ==========================================================
+  # Application Nginx
+  # ==========================================================
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: laravel_nginx
+
+    restart: unless-stopped
+
+    ports:
+      - "8003:80"
+
+    volumes:
+      - ./public:/var/www/html/public:ro
+      - ./storage/app/public:/var/www/html/public/storage:ro
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+
+    depends_on:
+      app:
+        condition: service_healthy
+
+    networks:
+      - laravel
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget --no-verbose --tries=1 --spider http://127.0.0.1/ || exit 1"
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+
+    # ==========================================================
+  # MySQL
+  # ==========================================================
+  mysql:
+    image: mysql:8.0
+    container_name: laravel_mysql
+    restart: unless-stopped
+
+    environment:
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql/my.cnf:/etc/mysql/conf.d/my.cnf:ro
+
+    networks:
+      - laravel
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mysqladmin ping -h 127.0.0.1 -u root --silent"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+
+  # ==========================================================
+  # Redis
+  # ==========================================================
+  redis:
+    image: redis:7-alpine
+    container_name: laravel_redis
+
+    restart: unless-stopped
+
+    command:
+      [
+        "redis-server",
+        "/usr/local/etc/redis/redis.conf"
+      ]
+
+    volumes:
+      - redis_data:/data
+      - ./docker/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+
+    networks:
+      - laravel
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "redis-cli",
+          "ping"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+
+  # ==========================================================
+  # Laravel Queue Worker
+  # ==========================================================
+  queue:
+    image: laravel-app:production
+    container_name: laravel_queue
+
+    restart: unless-stopped
+
+    working_dir: /var/www/html
+
+    env_file:
+      - .env.production
+
+    environment:
+      APP_ENV: production
+      APP_DEBUG: "false"
+
+      DB_CONNECTION: mysql
+      DB_HOST: mysql
+      DB_PORT: 3306
+
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+    command:
+      [
+        "php",
+        "artisan",
+        "queue:work",
+        "--queue=scan-record-broadcasts,dtr-mail,dtr-mail-broadcasts,dtr-export,dtr-export-broadcasts,password-reset-mail,password-reset-mail-broadcasts,run-remote-sync,rotate-attendance-qr,light,default"
+      ]
+
+    depends_on:
+      app:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+
+    networks:
+      - laravel
+
+
+  # ==========================================================
+  # Laravel Scheduler
+  # ==========================================================
+  scheduler:
+    image: laravel-app:production
+    container_name: laravel_scheduler
+
+    restart: unless-stopped
+
+    working_dir: /var/www/html
+
+    env_file:
+      - .env.production
+
+    environment:
+      APP_ENV: production
+      APP_DEBUG: "false"
+
+      DB_CONNECTION: mysql
+      DB_HOST: mysql
+      DB_PORT: 3306
+
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+    command:
+      [
+        "php",
+        "artisan",
+        "schedule:work"
+      ]
+
+    depends_on:
+      app:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+
+    networks:
+      - laravel
+
+
+  # ==========================================================
+  # Laravel Reverb
+  # ==========================================================
+  reverb:
+    image: laravel-app:production
+    container_name: laravel_reverb
+
+    restart: unless-stopped
+
+    working_dir: /var/www/html
+
+    env_file:
+      - .env.production
+
+    environment:
+      APP_ENV: production
+      APP_DEBUG: "false"
+
+      DB_CONNECTION: mysql
+      DB_HOST: mysql
+      DB_PORT: 3306
+
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+    command:
+      [
+        "php",
+        "artisan",
+        "reverb:start",
+        "--host=0.0.0.0",
+        "--port=8080"
+      ]
+
+    ports:
+      - "8083:8080"
+
+    depends_on:
+      app:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+    networks:
+      - laravel
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "php -r '$$fp=@fsockopen(\"127.0.0.1\",8080,$$e,$$s,2); exit($$fp?0:1);'"
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # ==========================================================
+  # phpMyAdmin
+  # ==========================================================
+  phpmyadmin:
+    image: phpmyadmin:latest
+    container_name: laravel_phpmyadmin
+
+    restart: unless-stopped
+
+    environment:
+      PMA_HOST: mysql
+      PMA_PORT: 3306
+      PMA_ARBITRARY: 0
+
+    ports:
+      - "8084:80"
+
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+    networks:
+      - laravel
+
+# ============================================================
+# Networks
+# ============================================================
+networks:
+  laravel:
+    driver: bridge
+
+
+# ============================================================
+# Persistent storage
+# ============================================================
+volumes:
+  mysql_data:
+    driver: local
+
+  redis_data:
+    driver: local
